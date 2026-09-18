@@ -17,7 +17,7 @@ limitations under the License.
 # On-Device Lightweight VLM Support — Design
 
 Status: Draft
-Tracks: roadmap item **On-Device Lightweight VLMs** (`README.md`), issues #1, #2, #3, #4, #5, #6, #7.
+Tracks: roadmap item **On-Device Lightweight VLMs** (`README.md`); see google/artemis issue #131.
 
 ## 1. Goal
 
@@ -25,7 +25,7 @@ Run ARTEMIS perception and control loops against **local, lightweight vision-lan
 models** (3B–8B class, e.g. `qwen2.5vl:7b`) instead of — or alongside — cloud APIs,
 for low latency, offline operation, and privacy-first automation.
 
-This document describes the endpoint plumbing landed in issues #1/#2 and the design
+This document describes the endpoint plumbing proposed in issue #131 and the design
 for what comes next.
 
 ## 2. Deployment Shapes
@@ -39,7 +39,7 @@ runtimes directly. The only difference is where the server lives.
 | Host-side | llama.cpp `llama-server` | `http://localhost:8080/v1` | GGUF quantized VLMs; provider `custom` |
 | Host-side | vLLM | `http://localhost:8000/v1` | GPU hosts; provider `vllm` |
 | LAN edge box | Ollama/vLLM on a home server | `http://192.168.1.10:8000/v1` | Shares one GPU across workstations; set `api_key` if the box is shared |
-| On-SoC (future) | NPU/GPU runtime on the phone itself, fronted by a localhost shim app | `http://127.0.0.1:<port>/v1` | Requires the perception-pipeline work in issues #3–#5 (small context, tight latency budget) |
+| On-SoC (future) | NPU/GPU runtime on the phone itself, fronted by a localhost shim app | `http://127.0.0.1:<port>/v1` | Requires the perception-pipeline work in §4 (small context, tight latency budget) |
 
 ## 3. Endpoint Configuration Schema
 
@@ -86,7 +86,7 @@ for primary **and** fallback nodes alike:
       "model": "gemini-3.8-pro",
       "fallback": { "provider": "ollama", "model": "qwen2.5vl:7b" }
     },
-    // Coordinate grounding stays on a specialized ER model for now (see #3).
+    // Coordinate grounding stays on a specialized ER model for now (see §4).
     "object_detector": {
       "provider": "google",
       "model": "gemini-robotics-er-2-preview"
@@ -110,28 +110,28 @@ A ready-made starting point ships as the `local-ollama` preset in
 Endpoint plumbing alone does not make a 7B VLM a good UI agent. The following
 work items close the gap (tracked as separate issues):
 
-- **Screenshot resize policy (#3).** Local VLMs have small effective vision
+- **Screenshot resize policy.** Local VLMs have small effective vision
   resolutions and token budgets. Add a deterministic resize/tile stage before
   the screenshot enters the prompt: cap the long edge, keep the aspect ratio,
   and record the scale factor alongside the image so coordinates can be mapped
   back. Candidate home: the screenshot acquisition path in
   `artemis/drivers/` / the Explorer input builders in `artemis/agents/`.
-- **Coordinate adapter (#3).** Every `[x, y]` the model emits must be scaled
+- **Coordinate adapter.** Every `[x, y]` the model emits must be scaled
   back through the recorded factor before hitting the controller
   (`artemis/controllers/`). Until this lands, keep `object_detector` /
   `explorer` on cloud ER models (they are fine-tuned for sub-pixel grounding;
   see the `object_detector` note in `config/artemis.jsonc`).
-- **Small-context memory (#4).** The default transcript budget
+- **Small-context memory.** The default transcript budget
   (`agent.memory.transcript.context_budget_tokens`, currently tuned for
   1M-token cloud contexts) must scale down for 8k–32k local contexts: lower
   `start_ratio`/`soft_ratio`, lean harder on `image_scrub_depth` and the
   chunking/recall layers so history fits.
-- **Structured-output discipline (#5).** Small models degrade on long tool
+- **Structured-output discipline.** Small models degrade on long tool
   schemas. Prefer the structured-output path (`artemis/llm/structured.py`)
   with minimal schemas per node, and disable `include_thoughts`-style
   reasoning traces the endpoint cannot honor (`reasoning_effort` is already
   forwarded for vLLM/custom endpoints).
-- **Capability gating (#5).** Use `is_multimodal: false` to keep text-only
+- **Capability gating.** Use `is_multimodal: false` to keep text-only
   local models away from perception nodes; `_resolve_endpoint` already carries
   the flag to `ModelEndpoint`.
 
