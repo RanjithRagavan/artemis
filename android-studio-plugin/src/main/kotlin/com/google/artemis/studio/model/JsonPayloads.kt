@@ -60,7 +60,15 @@ internal fun JsonObject.firstElement(vararg keys: String): JsonElement? {
 /** Resolves a device serial from the many shapes the ARTEMIS server can emit. */
 internal fun deviceSerialFromPayload(payload: JsonObject): String? {
     payload.firstString("device_serial", "device_id")?.let { return it }
-    val info = payload.get("device_info") ?: return null
+    var info = payload.get("device_info") ?: return null
+    // models.py also tolerates device_info arriving as a JSON-encoded string.
+    if (info.isJsonPrimitive && info.asJsonPrimitive.isString) {
+        info = try {
+            com.google.gson.JsonParser.parseString(info.asString)
+        } catch (e: Exception) {
+            return null
+        }
+    }
     if (info.isJsonObject) {
         return info.asJsonObject.firstString("device_serial", "device_id")
     }

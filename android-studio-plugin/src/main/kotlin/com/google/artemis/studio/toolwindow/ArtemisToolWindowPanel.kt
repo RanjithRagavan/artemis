@@ -245,6 +245,7 @@ class ArtemisToolWindowPanel(private val project: Project) :
         if (reachable) {
             statusLabel.text = "Server: reachable"
             statusLabel.icon = AllIcons.General.InspectionsOK
+            statusLabel.toolTipText = null
         } else {
             statusLabel.text = "Server: unreachable"
             statusLabel.icon = AllIcons.General.Error

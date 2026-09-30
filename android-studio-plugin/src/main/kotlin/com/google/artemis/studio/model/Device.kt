@@ -16,6 +16,7 @@
 
 package com.google.artemis.studio.model
 
+import com.google.artemis.studio.api.ArtemisApiException
 import com.google.gson.JsonObject
 
 /**
@@ -56,5 +57,10 @@ data class Device(
     }
 }
 
-/** Thrown when the server response does not match the documented ARTEMIS payload shapes. */
-class ArtemisProtocolException(message: String) : RuntimeException(message)
+/**
+ * Thrown when the server response does not match the documented ARTEMIS payload
+ * shapes. Extends [ArtemisApiException] so malformed-payload failures are
+ * surfaced as readable UI errors by the same catch blocks that handle HTTP
+ * failures, instead of bubbling into the IDE error reporter.
+ */
+class ArtemisProtocolException(message: String) : ArtemisApiException(message)

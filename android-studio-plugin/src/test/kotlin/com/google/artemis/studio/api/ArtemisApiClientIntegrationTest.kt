@@ -23,6 +23,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -184,6 +185,37 @@ class ArtemisApiClientIntegrationTest {
         // Mirrors test_invalid_devices_payload_is_rejected.
         respond("/api/devices") { 200 to """{"devices": "not-a-list"}""" }
         assertThrows<ArtemisApiException> { client.listDevices() }
+    }
+
+    @Test
+    fun `devices endpoint treats missing devices key as empty list`() {
+        // Mirrors client.py: payload.get("devices", []) yields [] when the key
+        // is absent, but an explicit null remains a protocol error.
+        respond("/api/devices") { 200 to """{}""" }
+        assertTrue(client.listDevices().isEmpty())
+    }
+
+    @Test
+    fun `submit injects client session id when server returns only id`() {
+        // Matches client.py setdefault("session_id", resolved_task_id): the
+        // client-generated idempotency ID wins over a bare server-side "id".
+        respond("/api/run") { 200 to """{"status": "started", "tasks": [{"id": "server-internal-1"}]}""" }
+        val handle = client.submit(RunRequest(goal = "Open Settings", profile = "flash"))
+        // The handle must NOT adopt the server-internal id as the task id.
+        assertTrue(handle.taskId != "server-internal-1")
+        UUID.fromString(handle.taskId) // client-generated UUID
+    }
+
+    @Test
+    fun `malformed admitted task entry raises api exception not runtime error`() {
+        // The entry has an empty session_id, which firstString treats as absent;
+        // TaskHandle parsing then fails with ArtemisProtocolException, which must
+        // be an ArtemisApiException so UI catch blocks surface it as a readable
+        // error instead of leaking into the IDE error reporter.
+        respond("/api/run") { 200 to """{"status": "started", "tasks": [{"session_id": "  ", "status": "pending"}]}""" }
+        assertThrows<ArtemisApiException> {
+            client.submit(RunRequest(goal = "Open Settings", profile = "flash"))
+        }
     }
 
     private fun String.asJson(): JsonObject = JsonParser.parseString(this).asJsonObject

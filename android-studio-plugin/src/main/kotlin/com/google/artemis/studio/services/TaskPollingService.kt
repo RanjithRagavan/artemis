@@ -61,7 +61,7 @@ class TaskPollingService(private val project: Project, private val scope: Corout
         /** The tracked-task list or one of its entries changed. */
         fun onTasksUpdated()
 
-        /** Server reachability changed (or was re-confirmed). */
+        /** Server reachability was determined for the first time or changed. */
         fun onServerStatusChanged(reachable: Boolean, detail: String)
 
         /** A device refresh completed; [error] is non-null on failure. */
@@ -71,11 +71,15 @@ class TaskPollingService(private val project: Project, private val scope: Corout
     private val tracked = CopyOnWriteArrayList<TrackedTask>()
     private val listeners = CopyOnWriteArrayList<Listener>()
     private val pollLock = Any()
+    private val pollCycleLock = Any()
     private var pollJob: Job? = null
 
     @Volatile
     var serverReachable: Boolean = false
         private set
+
+    @Volatile
+    private var serverStatusReported: Boolean = false
 
     fun trackedTasks(): List<TrackedTask> = tracked.toList()
 
@@ -123,13 +127,31 @@ class TaskPollingService(private val project: Project, private val scope: Corout
         }
     }
 
-    /** Start the 2-second polling loop (idempotent). */
+    /**
+     * Start the 2-second polling loop (idempotent). The loop exits on its own
+     * once every tracked task is terminal, and is cancelled when the project
+     * (and therefore this service's scope) is disposed.
+     */
     fun startPolling() {
         synchronized(pollLock) {
             if (pollJob?.isActive == true) return
             pollJob = scope.launch(Dispatchers.IO) {
                 while (isActive) {
                     pollOnce()
+                    // Stop polling when nothing is left to poll. The check and
+                    // the pollJob reset happen under pollLock so a concurrent
+                    // track() + startPolling() either sees this job as still
+                    // active (and the loop then sees the new task) or sees
+                    // pollJob == null and starts a fresh loop.
+                    val keepPolling = synchronized(pollLock) {
+                        if (tracked.any { !it.done }) {
+                            true
+                        } else {
+                            pollJob = null
+                            false
+                        }
+                    }
+                    if (!keepPolling) break
                     delay(POLL_INTERVAL_MS)
                 }
             }
@@ -141,7 +163,11 @@ class TaskPollingService(private val project: Project, private val scope: Corout
         scope.launch(Dispatchers.IO) { pollOnce() }
     }
 
-    private fun pollOnce() {
+    // Serialized with pollCycleLock so the periodic loop, manual refreshes and
+    // stop-follow-up polls never run concurrently; that keeps the
+    // read-modify-write of TrackedTask.latest (and the "finished" notification
+    // decision based on it) race-free.
+    private fun pollOnce() = synchronized(pollCycleLock) {
         val client = newClient()
         var reachable = true
         var detail = "Connected to ${ArtemisSettings.getInstance().serverUrl}"
@@ -153,12 +179,16 @@ class TaskPollingService(private val project: Project, private val scope: Corout
         }
         val changed = reachable != serverReachable
         serverReachable = reachable
-        if (changed || !reachable) {
+        // Always report the first poll outcome (the UI starts in a "Checking…"
+        // state), then only on transitions — repeating the same unreachable
+        // state every cycle would just churn the EDT.
+        if (changed || !serverStatusReported) {
+            serverStatusReported = true
             val d = detail
             val r = reachable
             notifyEdt { listeners.forEach { it.onServerStatusChanged(r, d) } }
         }
-        if (!reachable) return
+        if (!reachable) return@synchronized
 
         var anyUpdated = false
         for (task in tracked) {

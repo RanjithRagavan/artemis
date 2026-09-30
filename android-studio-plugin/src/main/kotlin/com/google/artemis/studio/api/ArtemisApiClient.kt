@@ -71,9 +71,16 @@ class ArtemisApiClient(
     /** List Android devices visible to the remote ARTEMIS host. */
     fun listDevices(): List<Device> {
         val payload = request("GET", "/api/devices")
+        // Matches client.py: a bare array is accepted; for a wrapped payload a
+        // missing "devices" key yields an empty list, while an explicit null or
+        // a non-list value is a protocol error.
         val rawDevices: JsonElement? = when {
             payload == null || payload.isJsonNull -> null
-            payload.isJsonObject -> payload.asJsonObject.get("devices")
+            payload.isJsonObject -> {
+                val obj = payload.asJsonObject
+                if (!obj.has("devices")) return emptyList()
+                obj.get("devices")
+            }
             payload.isJsonArray -> payload
             else -> null
         }
@@ -113,7 +120,10 @@ class ArtemisApiClient(
             throw ArtemisApiException("/api/run response did not contain an admitted task")
         }
         val taskPayload = tasks.asJsonArray[0].asJsonObject.deepCopy()
-        if (!taskPayload.has("session_id") && !taskPayload.has("task_id") && !taskPayload.has("id")) {
+        // Match client.py's setdefault semantics exactly: the client-generated
+        // idempotency ID is injected whenever the server omitted "session_id",
+        // so it wins over a bare server-side "id" during TaskHandle parsing.
+        if (!taskPayload.has("session_id")) {
             taskPayload.addProperty("session_id", request.resolvedTaskId)
         }
         if (!taskPayload.has("status")) {

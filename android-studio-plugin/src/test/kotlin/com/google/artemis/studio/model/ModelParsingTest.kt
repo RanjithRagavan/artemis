@@ -128,6 +128,31 @@ class ModelParsingTest {
     }
 
     @Test
+    fun `device serial resolves from json-encoded device_info string`() {
+        // Mirrors models.py _device_from_payload, which json.loads a string
+        // device_info before reading device_serial from it.
+        val result = TaskResult.fromPayload(
+            parse(
+                """{
+                  "session_id": "abc-123",
+                  "status": "running",
+                  "device_info": "{\"device_serial\": \"emu-string-1\"}"
+                }"""
+            )
+        )
+        assertEquals("emu-string-1", result.deviceSerial)
+    }
+
+    @Test
+    fun `protocol exception is an api exception subtype`() {
+        // UI catch blocks only handle ArtemisApiException; malformed payloads
+        // must not escape as an unrelated RuntimeException into the IDE.
+        org.junit.jupiter.api.assertThrows<com.google.artemis.studio.api.ArtemisApiException> {
+            Device.fromPayload(parse("""{"state": "device"}"""))
+        }
+    }
+
+    @Test
     fun `capabilities parse list-shaped features`() {
         val caps = Capabilities.fromPayload(
             parse(
