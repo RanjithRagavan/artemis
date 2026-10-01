@@ -46,7 +46,14 @@ class ArtemisApiClient(
     connectTimeout: Duration = Duration.ofSeconds(10),
 ) {
     private val baseUrl: String = baseUrl.trim().trimEnd('/')
+
+    // Force HTTP/1.1: java.net.http defaults to HTTP/2 and attempts an h2c
+    // upgrade on the first request. Uvicorn (the ARTEMIS server) does not
+    // support cleartext upgrade and silently drops the POST body while
+    // processing it, so FastAPI then fails validation with 422 "body: Field
+    // required". Verified against a live server (2026-09-30).
     private val http: HttpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(connectTimeout)
         .build()
     private val gson = Gson()
